@@ -6,30 +6,54 @@ import {
   CHECKPOINTS,
 } from "./types";
 
-const OLLAMA_URL = "http://localhost:11434/api/generate";
-const MODEL = "gemma4:31b-cloud";
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+// google/gemma-4-27b-it is the Gemma 4 instruct-tuned model available on OpenRouter.
+// (There is no 31B variant; 27B is the largest in the Gemma 4 series.)
+const MODEL = "google/gemma-4-31b-it";
 
-interface OllamaResponse {
-  response: string;
+interface OpenRouterResponse {
+  choices: [{ message: { content: string } }];
 }
 
-async function callOllama(prompt: string): Promise<string> {
-  const res = await fetch(OLLAMA_URL, {
+async function callLLM(
+  systemPrompt: string,
+  userPrompt: string,
+): Promise<string> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing OPENROUTER_API_KEY environment variable");
+  }
+
+  const res = await fetch(OPENROUTER_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+      "HTTP-Referer": "http://localhost:3000",
+      "X-Title": "AnotherMe",
+    },
     body: JSON.stringify({
       model: MODEL,
-      prompt,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
       stream: false,
     }),
   });
 
   if (!res.ok) {
-    throw new Error(`Ollama API returned ${res.status}: ${await res.text()}`);
+    throw new Error(
+      `OpenRouter API returned ${res.status}: ${await res.text()}`,
+    );
   }
 
-  const data = (await res.json()) as OllamaResponse;
-  return data.response;
+  const data = (await res.json()) as OpenRouterResponse;
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error("OpenRouter response missing content");
+  }
+  return content;
 }
 
 export function cleanJsonResponse(text: string): string {
@@ -53,10 +77,12 @@ function parseJsonResponse<T>(text: string): T {
     return JSON.parse(cleaned) as T;
   } catch (e) {
     throw new Error(
-      `Failed to parse Ollama response as JSON: ${e instanceof Error ? e.message : String(e)}. Response: ${cleaned.slice(0, 500)}`
+      `Failed to parse LLM response as JSON: ${e instanceof Error ? e.message : String(e)}. Response: ${cleaned.slice(0, 500)}`,
     );
   }
 }
+
+const EXTRACTION_SYSTEM_PROMPT = `You are a health habit extraction engine. Extract structured habits from user text and return ONLY valid JSON.`;
 
 const HABITS_SCHEMA = `{
   "sleep_hours": number (0-12),
@@ -69,7 +95,8 @@ const HABITS_SCHEMA = `{
   "water_intake": "very_low" | "low" | "adequate" | "high"
 }`;
 
-const EXTRACTION_PROMPT_TEMPLATE = `You are a health habit extraction engine. Extract structured habits from the following user text. If any habit field is missing, infer a reasonable value based on the text and mark it as an assumption.
+function buildExtractionUserPrompt(text: string): string {
+  return `Extract structured habits from the following user text. If any habit field is missing, infer a reasonable value based on the text and mark it as an assumption.
 
 Return ONLY valid JSON in this exact format:
 {
@@ -79,18 +106,25 @@ Return ONLY valid JSON in this exact format:
 
 User text:
 """
-{{TEXT}}
+${text}
 """`;
+}
 
-const SIMULATION_PROMPT_TEMPLATE = `You are a health simulation engine. Given a person's habits, simulate the trajectory of ONE specific health dimension over 5 checkpoints (6mo, 1yr, 2yr, 3yr, 5yr). Each checkpoint must have a score 0-100 and a brief event description.
+const SIMULATION_SYSTEM_PROMPT = `You are a health simulation engine. Given a person's habits, simulate the trajectory of ONE specific health dimension over time. Return ONLY valid JSON.`;
 
-Habits: {{HABITS}}
+function buildSimulationUserPrompt(
+  habits: Habits,
+  dimension: DimensionKey,
+): string {
+  return `Given a person's habits, simulate the trajectory of ONE specific health dimension over 5 checkpoints (6mo, 1yr, 2yr, 3yr, 5yr). Each checkpoint must have a score 0-100 and a brief event description.
 
-Dimension to simulate: {{DIMENSION}}
+Habits: ${JSON.stringify(habits)}
+
+Dimension to simulate: ${dimension}
 
 Return ONLY valid JSON in this exact format:
 {
-  "dimension": "{{DIMENSION}}",
+  "dimension": "${dimension}",
   "unit": "score_0_to_100",
   "timeline": [
     { "checkpoint": "6mo", "value": number, "event": string },
@@ -100,14 +134,17 @@ Return ONLY valid JSON in this exact format:
     { "checkpoint": "5yr", "value": number, "event": string }
   ]
 }`;
+}
 
 export async function extractHabits(text: string): Promise<ExtractionResult> {
   if (!text || typeof text !== "string") {
     throw new Error("Invalid input: text must be a non-empty string");
   }
 
-  const prompt = EXTRACTION_PROMPT_TEMPLATE.replace("{{TEXT}}", text);
-  const raw = await callOllama(prompt);
+  const raw = await callLLM(
+    EXTRACTION_SYSTEM_PROMPT,
+    buildExtractionUserPrompt(text),
+  );
   const parsed = parseJsonResponse<{
     habits: Habits;
     assumptions_filled: string[];
@@ -117,7 +154,9 @@ export async function extractHabits(text: string): Promise<ExtractionResult> {
     throw new Error("Invalid extraction response: missing habits object");
   }
   if (!Array.isArray(parsed.assumptions_filled)) {
-    throw new Error("Invalid extraction response: assumptions_filled must be an array");
+    throw new Error(
+      "Invalid extraction response: assumptions_filled must be an array",
+    );
   }
 
   return {
@@ -128,7 +167,7 @@ export async function extractHabits(text: string): Promise<ExtractionResult> {
 
 export async function simulateDimension(
   habits: Habits,
-  dimension: DimensionKey
+  dimension: DimensionKey,
 ): Promise<DimensionResult> {
   if (!habits || typeof habits !== "object") {
     throw new Error("Invalid input: habits must be an object");
@@ -137,24 +176,28 @@ export async function simulateDimension(
     throw new Error("Invalid input: dimension must be provided");
   }
 
-  const prompt = SIMULATION_PROMPT_TEMPLATE
-    .replace("{{HABITS}}", JSON.stringify(habits))
-    .replace(/\{\{DIMENSION\}\}/g, dimension);
-
-  const raw = await callOllama(prompt);
+  const raw = await callLLM(
+    SIMULATION_SYSTEM_PROMPT,
+    buildSimulationUserPrompt(habits, dimension),
+  );
   const parsed = parseJsonResponse<DimensionResult>(raw);
 
   if (parsed.dimension !== dimension) {
     throw new Error(
-      `Invalid simulation response: expected dimension '${dimension}', got '${parsed.dimension}'`
+      `Invalid simulation response: expected dimension '${dimension}', got '${parsed.dimension}'`,
     );
   }
   if (parsed.unit !== "score_0_to_100") {
-    throw new Error(`Invalid simulation response: unexpected unit '${parsed.unit}'`);
-  }
-  if (!Array.isArray(parsed.timeline) || parsed.timeline.length !== CHECKPOINTS.length) {
     throw new Error(
-      `Invalid simulation response: timeline must have exactly ${CHECKPOINTS.length} checkpoints`
+      `Invalid simulation response: unexpected unit '${parsed.unit}'`,
+    );
+  }
+  if (
+    !Array.isArray(parsed.timeline) ||
+    parsed.timeline.length !== CHECKPOINTS.length
+  ) {
+    throw new Error(
+      `Invalid simulation response: timeline must have exactly ${CHECKPOINTS.length} checkpoints`,
     );
   }
 
@@ -162,17 +205,21 @@ export async function simulateDimension(
     const point = parsed.timeline[i];
     if (point.checkpoint !== CHECKPOINTS[i]) {
       throw new Error(
-        `Invalid simulation response: expected checkpoint '${CHECKPOINTS[i]}' at index ${i}, got '${point.checkpoint}'`
+        `Invalid simulation response: expected checkpoint '${CHECKPOINTS[i]}' at index ${i}, got '${point.checkpoint}'`,
       );
     }
-    if (typeof point.value !== "number" || point.value < 0 || point.value > 100) {
+    if (
+      typeof point.value !== "number" ||
+      point.value < 0 ||
+      point.value > 100
+    ) {
       throw new Error(
-        `Invalid simulation response: value at ${point.checkpoint} must be a number 0-100`
+        `Invalid simulation response: value at ${point.checkpoint} must be a number 0-100`,
       );
     }
     if (!point.event || typeof point.event !== "string") {
       throw new Error(
-        `Invalid simulation response: event at ${point.checkpoint} must be a non-empty string`
+        `Invalid simulation response: event at ${point.checkpoint} must be a non-empty string`,
       );
     }
   }

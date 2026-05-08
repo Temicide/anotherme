@@ -3,7 +3,7 @@
 ## Requirements
 From GitHub issue #1 / PLAN.md:
 - Free-text habit input
-- Ollama extraction call (`gemma4:31b-cloud`)
+- ~~Ollama extraction call (`gemma4:31b-cloud`)~~ → **OpenRouter chat completions (`google/gemma-4-27b-it`)**
 - Assumption review/edit form with sliders (numeric) and dropdowns (categorical)
 - 10 parallel dimension simulations via backend fan-out (concurrency 5)
 - 16×24 CSS div pixel art humanoid with 5 health states (posture + color + size + particles)
@@ -25,8 +25,9 @@ From GitHub issue #1 / PLAN.md:
 |----------|-----------|
 | `node:test` + `tsx` for testing | Lightweight, no extra test framework needed for pure JS modules |
 | Recharts for charts | PRD specifies Recharts; handles sparklines well |
-| Ollama client uses fetch directly | Standard Ollama API is simple HTTP POST; no need for a wrapper library |
-| All prompt engineering in Ollama client module | Single point of contact with LLM per PRD |
+| ~~Ollama client uses fetch directly~~ → **OpenRouter client uses native fetch** | OpenRouter provides OpenAI-compatible chat completions API; native fetch is sufficient |
+| All prompt engineering in LLM client module | Single point of contact with the LLM per PRD |
+| API key in `.env.local` | Security best practice; keeps secrets out of source control |
 
 ## Issues Encountered
 | Issue | Resolution |

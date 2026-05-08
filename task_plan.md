@@ -54,7 +54,7 @@ Phase 1
 - **Status:** complete
 
 ## Key Questions
-1. Is Ollama running locally or via cloud endpoint? → PRD says `gemma4:31b-cloud` via standard Ollama API; assume `http://localhost:11434/api/generate` for dev
+1. Is Ollama running locally or via cloud endpoint? → Switched to OpenRouter cloud API (`google/gemma-4-27b-it`) per user request
 2. Should tests use a specific runner? → Next.js doesn't include Jest by default; will add vitest or use node:test for backend modules
 3. Are there existing assets in public/? → No relevant ones; pixel art is pure CSS
 
@@ -66,6 +66,8 @@ Phase 1
 | Auto-play acceleration: 4000→3000→2500→2000→1500ms | Per PRD exact values |
 | Pixel grid: 16 cols × 24 rows divs | PRD specification |
 | Concurrency limit 5, no retries | PRD specification |
+| Switched from Ollama to OpenRouter | User request — OpenRouter provides cloud-hosted `google/gemma-4-27b-it` |
+| API key stored in `.env.local` | Security best practice — never commit secrets to source code |
 
 ## Errors Encountered
 | Error | Attempt | Resolution |

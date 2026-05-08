@@ -39,7 +39,7 @@ Built as a Next.js application powered by OpenRouter (Gemma 4), AnotherMe makes 
 ```
 User text
     → POST /api/extract
-        → OpenRouter (gemma-4-27b-it) extracts structured habits
+        → OpenRouter (gemma-4-31b-it) extracts structured habits
     → Assumption review form (sliders + dropdowns)
     → POST /api/simulate
         → Backend fans out 10 dimension calls
@@ -250,7 +250,7 @@ anotherme/
 
 | Decision                             | Rationale                                                                       |
 | ------------------------------------ | ------------------------------------------------------------------------------- |
-| OpenRouter (`google/gemma-4-27b-it`) | Cloud-hosted Gemma 4 via OpenAI-compatible API; no local GPU required           |
+| OpenRouter (`google/gemma-4-31b-it`) | Cloud-hosted Gemma 4 via OpenAI-compatible API; no local GPU required           |
 | Native `fetch` for LLM calls         | Simple enough for a single endpoint; no heavy client library needed             |
 | Concurrency limit of 5               | Protects against rate limiting while keeping total simulation time ~15s         |
 | No retries on failure                | Graceful degradation: show "unavailable" rather than block the whole experience |
